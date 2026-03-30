@@ -1,0 +1,2 @@
+# RAGgae
+A RAG application.
