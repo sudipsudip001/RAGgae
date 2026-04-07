@@ -2,14 +2,18 @@ from transformers import pipeline
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from langchain_community.vectorstores import FAISS
 import torch
-from retriever import Retriever
 from rerankers import Reranker
 from transformers import Pipeline
 from typing import Optional
 
 class Reader:
-    def __init__(self):
-        self.READER_MODEL_NAME = "HuggingFaceH4/zephyr-7b-beta"
+    def __init__(
+        self,
+        reader_model_name: str = "HuggingFaceH4/zephyr-7b-beta",
+        reranker_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    ) -> None:
+        self.READER_MODEL_NAME = reader_model_name
+        self.RERANKER_NAME = reranker_name
         self.prompt_in_chat_format = [
             {
                 "role": "system",
@@ -65,13 +69,13 @@ class Reader:
                 self.prompt_in_chat_format, tokenize=False, add_generation_prompt=True
             )
         return self._rag_prompt_template
-    
+
     @property
     def reranker(self):
         if self._reranker is None:
-            self._reranker = Reranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
+            self._reranker = Reranker(model_name=self.RERANKER_NAME)
         return self._reranker
-    
+
     @property
     def model(self):
         if self._model is None:
@@ -79,13 +83,13 @@ class Reader:
                 self.READER_MODEL_NAME, quantization_config=self.bnb_config
             )
         return self._model
-    
+
     @property
     def tokenizer(self):
         if self._tokenizer is None:
             self._tokenizer = AutoTokenizer.from_pretrained(self.READER_MODEL_NAME)
         return self._tokenizer
-    
+
     @property
     def reader_llm(self):
         if self._reader_llm is None:
@@ -101,26 +105,6 @@ class Reader:
             )
         return self._reader_llm
 
-
-    def ask_the_reader(self):
-        retriever = Retriever()
-        KNOWLEDGE_VECTOR = retriever.build_vector_database()
-        retrieved_docs = retriever.retrieve_docs(KNOWLEDGE_VECTOR, "What is the meaning of 'Basic remuneration'?") #-----------> missing something here?
-
-        retrieved_docs_text = [
-            doc.page_content for doc in retrieved_docs
-        ]
-        context = "\nExtracted documents:\n"
-        context += "".join(
-            [f"Document {str(i)}:::\n" + doc for i, doc in enumerate(retrieved_docs_text)]
-        )
-        final_prompt = self.RAG_PROMPT_TEMPLATE.format(
-            question="What is the meaning of 'Basic remuneration'?", context=context
-        )
-
-        answer = self.READER_LLM(final_prompt)[0]["generated_text"]
-        return answer
-
     def answer_with_rag(
         self,
         question: str,
@@ -135,13 +119,11 @@ class Reader:
             query=question, k=num_retrieved_docs
         )
         relevant_docs = initial_docs
-
         if reranker:
             print("===> Reranking documents...")
             doc_texts = [doc.page_content for doc in relevant_docs]
             rerank_results = reranker.rank(question, doc_texts)
             reranked_docs = []
-
             for res in rerank_results.results[:num_docs_final]:
                 for doc in relevant_docs:
                     if doc.page_content == res.document:
@@ -149,21 +131,17 @@ class Reader:
                         break
         else:
             relevant_docs = relevant_docs[:num_docs_final]
-
         context = "\nExtracted documents:\n"
         for i, doc in enumerate(relevant_docs):
             source = doc.metadata.get("source", "unknown")
             page = doc.metadata.get("page", "unknown")
-
             context += f"""
                 --- Document {i} ---
                 Source: {source}
                 Page: {page}
-
                 {doc.page_content}
             """
         final_prompt = self.RAG_PROMPT_TEMPLATE.format(question=question, context=context)
         print("=> Generating answer...")
         answer = llm(final_prompt)[0]["generated_text"]
-
         return answer, relevant_docs

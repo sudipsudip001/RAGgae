@@ -6,7 +6,7 @@ from openai import OpenAI
 from retriever import Retriever
 import pandas as pd
 import datasets
-from ingest import IngestPdf
+from ingest import Ingestor
 
 class Evaluate:
     def __init__(self):

@@ -22,7 +22,7 @@ from langchain_ollama import ChatOllama
 import os
 from retriever import Retriever
 from evaluate import Evaluate
-from ingest import IngestPdf
+from ingest import Ingestor
 from reader import Reader
 
 class Benchmark:

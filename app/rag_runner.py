@@ -2,15 +2,28 @@ from retriever import Retriever
 from reader import Reader
 from benchmark import Benchmark
 import torch
+from dotenv import load_dotenv
 import gc
+from ingest import Ingestor
 
 def main():
-    retriever = Retriever()
-    knowledge_index = retriever.build_vector_database()
-    reader = Reader()
+    ingestor = Ingestor(
+        ["../docs/crime_act.pdf", "../docs/interim_government_act.pdf", "../docs/labor_act.pdf"],
+        200,
+        50,
+        "thenlper/gte-small"
+    )
+    VECTOR_DB = ingestor.vector_database
 
-    print("RAG system loaded! Type 'exit' to quit.\n")
+    retriever = Retriever(
+        VECTOR_DB
+    )
+    reader = Reader(
+        "HuggingFaceH4/zephyr-7b-beta",
+        "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    )
 
+    print("RAG system loaded! Type 'exit/quit/q' to quit and 'evaluate' to evaluate the model.\n")
     while True:
         question = input("Ask a question: ").strip()
 
@@ -22,10 +35,12 @@ def main():
             print("Goodbye!")
             break
 
+        # docs_read = retriever.retrieve_docs(question)
+
         answer, relevant_docs = reader.answer_with_rag(
             question = question,
             llm=reader.reader_llm,
-            knowledge_index=knowledge_index,
+            knowledge_index=VECTOR_DB,
             reranker=reader.reranker,
         )
 
@@ -46,4 +61,5 @@ def main():
     # print(f"The average scores after the evaluation are: {average_scores}")
 
 if __name__ == "__main__":
+    load_dotenv()
     main()
