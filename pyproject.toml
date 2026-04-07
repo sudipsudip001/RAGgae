@@ -3,11 +3,28 @@ name = "raggae"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "faiss-gpu>=1.7.2",
+    "accelerate>=1.1.0",
+    "bitsandbytes>=0.46.1",
+    "faiss-gpu-cu12>=1.14.1.post1",
+    "google-api-core>=2.30.1",
+    "ipywidgets>=8.1.8",
     "langchain>=1.2.13",
     "langchain-community>=0.4.1",
-    "pymupdf>=1.27.2.2",
-    "streamlit>=1.55.0",
+    "langchain-google-genai>=4.2.1",
+    "langchain-groq>=1.1.2",
+    "langchain-ollama>=1.0.1",
+    "matplotlib>=3.10.8",
+    "nbformat>=4.2.0",
+    "pandas>=3.0.2",
+    "plotly>=6.6.0",
+    "pymupdf4llm>=1.27.2.2",
+    "pypdf>=6.9.2",
+    "ragatouille>=0.0.9.post2",
+    "rerankers>=0.10.0",
+    "sentence-transformers>=5.3.0",
+    "tqdm>=4.67.3",
+    "transformers>=5.4.0",
+    "wikipedia>=1.4.0",
 ]
