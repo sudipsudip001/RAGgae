@@ -11,24 +11,40 @@ class Reader:
     def __init__(self):
         self.READER_MODEL_NAME = "HuggingFaceH4/zephyr-7b-beta"
         self.prompt_in_chat_format = [
-                {
-                    "role": "system",
-                    "content": """Using the information contained in the context,
-            give a comprehensive answer to the question.
-            Respond only to the question asked, response should be concise and relevant to the question.
-            Provide the number of the source document when relevant.
-            If the answer cannot be deduced from the context, do not give an answer.""",
-                },
-                {
-                    "role": "user",
-                    "content": """Context:
-            {context}
-            ---
-            Now here is the question you need to answer.
+            {
+                "role": "system",
+                "content": """You are a precise information retrieval assistant. Your ONLY job is to extract exact information from the provided context.
 
-            Question: {question}""",
-                },
-            ]
+        STRICT RULES — violations are not acceptable:
+        - Answer EXCLUSIVELY from the provided context and only answer the given question. No external knowledge.
+        - Do NOT paraphrase, infer, summarize, or elaborate.
+        - Do NOT add any explanation, commentary, or filler phrases.
+        - Do NOT combine or merge information from multiple sources unless the question explicitly asks for it.
+        - If the answer is not explicitly stated in the context, respond ONLY with: "Not found in the provided context."
+        - Copy the Source and Page number exactly as they appear in the context — no modifications.
+        - Every claim in your answer must be backed by a direct quote.
+
+        """
+            },
+            {
+                "role": "user",
+                "content": """Context:
+        {context}
+
+        Question: {question}
+
+        Respond using this exact format and nothing else:
+
+        If answerable:
+            Answer: <one or two sentences maximum, strictly from the context>
+
+            Evidence:
+            - Source | Page
+            exact context
+
+        If unanswerable: write only "Not found in the provided context." with no Evidence section."""
+            }
+        ]
 
         self.bnb_config = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -111,31 +127,43 @@ class Reader:
         llm: Pipeline,
         knowledge_index: FAISS,
         reranker: Optional[Reranker] = None,
-        num_retrieved_docs: int = 30,
-        num_docs_final: int = 5,
+        num_retrieved_docs: int = 5,
+        num_docs_final: int = 3,
     ):
         print("===> Retrieving documents...")
         initial_docs = knowledge_index.similarity_search(
             query=question, k=num_retrieved_docs
         )
-        relevant_docs = [doc.page_content for doc in initial_docs]
+        relevant_docs = initial_docs
 
         if reranker:
             print("===> Reranking documents...")
-            rerank_results = reranker.rank(question, relevant_docs)
-            relevant_docs = [res.document for res in rerank_results.results[:num_docs_final]]
+            doc_texts = [doc.page_content for doc in relevant_docs]
+            rerank_results = reranker.rank(question, doc_texts)
+            reranked_docs = []
+
+            for res in rerank_results.results[:num_docs_final]:
+                for doc in relevant_docs:
+                    if doc.page_content == res.document:
+                        reranked_docs.append(doc)
+                        break
         else:
             relevant_docs = relevant_docs[:num_docs_final]
 
         context = "\nExtracted documents:\n"
-        context += "\n\n".join(
-            [f"--- Document {i} ---\n{doc}" for i, doc in enumerate(relevant_docs)]
-        )
+        for i, doc in enumerate(relevant_docs):
+            source = doc.metadata.get("source", "unknown")
+            page = doc.metadata.get("page", "unknown")
 
+            context += f"""
+                --- Document {i} ---
+                Source: {source}
+                Page: {page}
+
+                {doc.page_content}
+            """
         final_prompt = self.RAG_PROMPT_TEMPLATE.format(question=question, context=context)
-
-        print("===> Generating answer...")
-        raw_output = llm(final_prompt)
-        answer = raw_output[0]["generated_text"]
+        print("=> Generating answer...")
+        answer = llm(final_prompt)[0]["generated_text"]
 
         return answer, relevant_docs

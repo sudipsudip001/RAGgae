@@ -15,5 +15,14 @@ class IngestPdf:
         for pdf_path in self.PDF_LIST:
             loader = PyPDFLoader(pdf_path)
             pages = loader.load()
-            RAW_KNOWLEDGE_BASE.extend(pages)
+            for page in pages:
+                RAW_KNOWLEDGE_BASE.append(
+                    Document(
+                        page_content=page.page_content,
+                        metadata={
+                            "source": pdf_path,
+                            "page": page.metadata["page"]+1
+                        }
+                    )
+                )
         return RAW_KNOWLEDGE_BASE
