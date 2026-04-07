@@ -1,2 +1,7 @@
 .env
-.venv
+*.venv
+faiss_index_local
+init
+*__pycache__
+*data/
+*output/
