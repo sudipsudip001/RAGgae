@@ -14,7 +14,7 @@ class Reader:
     ) -> None:
         self.READER_MODEL_NAME = reader_model_name
         self.RERANKER_NAME = reranker_name
-        self.prompt_in_chat_format = [
+        self.prompt_in_chat_format= [
             {
                 "role": "system",
                 "content": """You are a precise information retrieval assistant. Your ONLY job is to extract exact information from the provided context.
