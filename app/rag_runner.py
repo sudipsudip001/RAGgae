@@ -1,10 +1,12 @@
 from retriever import Retriever
-from reader import Reader
 from benchmark import Benchmark
-import torch
-from dotenv import load_dotenv
-import gc
+from evaluate import Evaluate
 from ingest import Ingestor
+from reader import Reader
+from ragged import Ragged
+from dotenv import load_dotenv
+import torch
+import gc
 
 def main():
     ingestor = Ingestor(
@@ -14,6 +16,7 @@ def main():
         "thenlper/gte-small"
     )
     VECTOR_DB = ingestor.vector_database
+    RAW_KNOWLEDGE_BASE = ingestor.raw_knowledge_base
 
     retriever = Retriever(
         VECTOR_DB
@@ -50,15 +53,57 @@ def main():
         print("----------------------------------")
         print("DOCS REFERENCED:")
         print("----------------------------------")
-        print(relevant_docs)
+        print(relevant_docs[:500])
         print("----------------------------------")
 
         gc.collect()
         torch.cuda.empty_cache()
 
-    # bench = Benchmark()
-    # average_scores = bench.evaluate()
-    # print(f"The average scores after the evaluation are: {average_scores}")
+        if question.lower() in ("evaluate", "eval"):
+            chunks_data = ingestor.chunker()
+            evaluator = Evaluate(chunks_data)
+
+            eval_dataset = evaluator.generate_evaluation_dataset()
+
+            benchmarker = Benchmark(
+                evaluator_name="OLLAMA_llama3",
+                chunkz=chunks_data
+            )
+
+            print("--------------LLM as a judge-------------------")
+            scores = benchmarker.evaluate(
+                eval_dataset=eval_dataset,
+                RAW_KNOWLEDGE_BASE=RAW_KNOWLEDGE_BASE,
+            )
+            print("-------------LLM scores-------------")
+            print("Scores from LLM are: ", scores)
+
+            print("--------------RAGAS work-------------------")
+
+            outputs = benchmarker.run_rag_tests(
+                eval_dataset=eval_dataset,
+                knowledge_index=VECTOR_DB,
+                llm=reader.reader_llm,
+            ) #will work if run_rag_tests() works properly
+
+            ragas_dataset = [
+                {
+                    "question": item["question"],
+                    "ground_truth": item["true_answer"],
+                    "answer": item["generated_answer"],
+                    "contexts": item["retrieved_docs"]
+                }
+                for item in outputs
+            ]
+
+            # RAGAS evaluation
+            raga = Ragged(
+                ragas_dataset,
+                "thenlper/gte-small",
+                "mistralai/Mistral-7B-Instruct-v0.3",
+            )
+            final_score = raga.score()
+            print(final_score)
 
 if __name__ == "__main__":
     load_dotenv()
