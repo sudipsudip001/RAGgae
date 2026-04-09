@@ -17,36 +17,28 @@ class Reader:
         self.prompt_in_chat_format= [
             {
                 "role": "system",
-                "content": """You are a precise information retrieval assistant. Your ONLY job is to extract exact information from the provided context.
+                "content": 
+                """
+                You are a question answering system that MUST rely ONLY on the provided context.
 
-        STRICT RULES — violations are not acceptable:
-        - Answer EXCLUSIVELY from the provided context and only answer the given question. No external knowledge.
-        - Do NOT paraphrase, infer, summarize, or elaborate.
-        - Do NOT add any explanation, commentary, or filler phrases.
-        - Do NOT combine or merge information from multiple sources unless the question explicitly asks for it.
-        - If the answer is not explicitly stated in the context, respond ONLY with: "Not found in the provided context."
-        - Copy the Source and Page number exactly as they appear in the context — no modifications.
-        - Every claim in your answer must be backed by a direct quote.
-
-        """
+                STRICT RULES:
+                1. Answer ONLY using information found in the context.
+                2. DO NOT use prior knowledge.
+                3. DO NOT infer or guess missing information.
+                4. If the answer is not explicitly stated in the context, respond:
+                    "I cannot find the answer in the context."
+                """
             },
             {
-                "role": "user",
-                "content": """Context:
-        {context}
+            "role": "user",
+            "content": 
+            """
+                Context:
+                {context}
 
-        Question: {question}
-
-        Respond using this exact format and nothing else:
-
-        If answerable:
-            Answer: <one or two sentences maximum, strictly from the context>
-
-            Evidence:
-            - Source | Page
-            exact context
-
-        If unanswerable: write only "Not found in the provided context." with no Evidence section."""
+                Question:
+                {question}
+            """
             }
         ]
 
@@ -131,16 +123,18 @@ class Reader:
                         break
         else:
             relevant_docs = relevant_docs[:num_docs_final]
+        chunks = []
         context = "\nExtracted documents:\n"
-        for i, doc in enumerate(relevant_docs):
-            source = doc.metadata.get("source", "unknown")
-            page = doc.metadata.get("page", "unknown")
-            context += f"""
-                --- Document {i} ---
-                Source: {source}
-                Page: {page}
-                {doc.page_content}
-            """
+        for i, doc in enumerate(relevant_docs, start=1):
+            source = doc.metadata["source"]
+            page = doc.metadata["page"]
+            chunks.append(
+                f"[Chunk {i}]\n"
+                f"Source: {source}\n"
+                f"Page: {page}\n"
+                f"Content:\n{doc.page_content}"
+            )
+            context = "\n\n---\n\n".join(chunks)
         final_prompt = self.RAG_PROMPT_TEMPLATE.format(question=question, context=context)
         print("=> Generating answer...")
         answer = llm(final_prompt)[0]["generated_text"]
