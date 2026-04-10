@@ -58,7 +58,11 @@ def run_qa_loop():
         print("----------------------------------")
         print("DOCS REFERENCED:")
         print("----------------------------------")
-        print(relevant_docs[:500])
+        for i, doc in enumerate(relevant_docs):
+            print("----------------------------------")
+            print(f"Document {i}")
+            print(doc.page_content[:100])
+            print(doc.metadata)
         print("----------------------------------")
 
         gc.collect()
