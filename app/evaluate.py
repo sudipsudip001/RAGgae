@@ -1,15 +1,16 @@
 from langchain_core.documents import Document
-from typing import List
-import tqdm
-import random
+from typing import List, Dict
 from openai import OpenAI
-from retriever import Retriever
 import pandas as pd
 import datasets
-from ingest import IngestPdf
+import random
+import os
 
 class Evaluate:
-    def __init__(self):
+    def __init__(
+        self,
+        chunkz,
+    ) -> None:
         self._client = None
 
         self.N_GENERATIONS = 10
@@ -90,10 +91,15 @@ class Evaluate:
             Question: {question}\n
             Answer::: """
 
+        self.CHUNKS = chunkz
+
     @property
-    def client(self):
+    def client(self): # replace with better client
         if self._client is None:
-            self._client = OpenAI(api_key="ollama", base_url="http://localhost:11434/v1")
+            self._client = OpenAI(
+            api_key=os.getenv("GROQ_API_KEY"),
+            base_url="https://api.groq.com/openai/v1"
+        )
         return self._client
 
     def call_llm(self, client_instance: OpenAI, prompt: str, system_prompt: str = None):
@@ -106,14 +112,18 @@ class Evaluate:
         
         response = client_instance.chat.completions.create(
             messages=messages,
-            model="llama3.1:8b",
+            # model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             max_tokens=200,
-            temperature=0.7,
+            temperature=0,
             top_p=0.9,
         )
         return response.choices[0].message.content
 
-    def generate_qa(self, docs_processed: List[Document]):
+    def generate_qa(
+        self,
+        docs_processed: List[Document]
+    ) -> List[Dict]:
         outputs = []
         for sampled_context in random.sample(docs_processed, self.N_GENERATIONS):
             output_QA_couple = self.call_llm(
@@ -135,10 +145,10 @@ class Evaluate:
                 continue
         return outputs
 
-    def generate_evaluation_dataset(self):
-        the_retriever = Retriever()
-        RAW_KNOWLEDGE_BASE = the_retriever.raw_knowledge_base
-        docs_processed = the_retriever.split_documents(512, RAW_KNOWLEDGE_BASE) # needs parameters
+    def generate_evaluation_dataset(
+        self,
+    ):
+        docs_processed = self.CHUNKS
         outputs = self.generate_qa(docs_processed)
 
         for output in outputs:
@@ -176,9 +186,9 @@ class Evaluate:
         # final step of producing the result
         generated_questions = pd.DataFrame.from_dict(outputs)
         generated_questions = generated_questions.loc[
-            (generated_questions["groundedness_score"] >= 2)
-            & (generated_questions["relevance_score"] >= 2)
-            & (generated_questions["standalone_score"] >= 2)
+            (generated_questions["groundedness_score"] >= 3)
+            & (generated_questions["relevance_score"] >= 3)
+            & (generated_questions["standalone_score"] >= 3)
         ]
 
         eval_dataset = datasets.Dataset.from_pandas(

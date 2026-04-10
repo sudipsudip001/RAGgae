@@ -17,16 +17,18 @@ from langchain_core.prompts import (
     ChatPromptTemplate,
     HumanMessagePromptTemplate,
 )
+from langchain_groq import ChatGroq
 from langchain_core.messages import SystemMessage
-from langchain_ollama import ChatOllama
 import os
 from retriever import Retriever
-from evaluate import Evaluate
-from ingest import IngestPdf
 from reader import Reader
 
 class Benchmark:
-    def __init__(self):
+    def __init__(
+        self,
+        chunkz,
+        evaluator_name: str = "OLLAMA_llama3",
+    ):
         self.EVALUATION_PROMPT = """
             ###Task Description:
             An instruction (might include an Input inside it), a response to evaluate, a reference answer that gets a score of 5, and a score rubric representing a evaluation criteria are given.
@@ -61,17 +63,22 @@ class Benchmark:
             ]
         )
         
-        self.evaluator_name = "OLLAMA_llama3"
-
+        self.evaluator_name = evaluator_name
         self._eval_chat_model = None
+        self.chunk_size = 500
+        self.embedder = "thenlper/gte-small"
+        self.rerank = True
+        self.chunks = chunkz
     
     @property
-    def eval_chat_model(self):
+    def eval_chat_model(self): # replace with better evaluator chat model
         if self._eval_chat_model is None:
-            self._eval_chat_model = ChatOllama(
-                model="llama3.1:8b",
-                temperature=0,
-            )
+            self._eval_chat_model = ChatGroq(
+            # model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
+            temperature=0,
+            api_key=os.getenv("GROQ_API_KEY")
+        )
         return self._eval_chat_model
 
     def run_rag_tests(
@@ -79,7 +86,7 @@ class Benchmark:
         eval_dataset,
         llm,
         knowledge_index: VectorStore,
-        output_file: str,
+        output_file: str = None,
         reranker: Optional[Reranker] = None,
         verbose: Optional[bool] = True,
         test_settings: Optional[str] = None,
@@ -89,6 +96,7 @@ class Benchmark:
                 outputs = json.load(f)
         except:
             outputs = []
+            ragas_outputs = []
         
         for example in eval_dataset:
             question = example["question"]
@@ -117,8 +125,22 @@ class Benchmark:
                 result["test_settings"] = test_settings
             outputs.append(result)
 
-            with open(output_file, "w") as f:
-                json.dump(outputs, f)
+            #UNCOMMENT FOR OTHER PURPOSE
+            # with open(output_file, "w") as f:
+            #     json.dump(outputs, f)
+
+            # modified for the ragas output purpose
+            ragas_result = {
+                "question": question,
+                "true_answer": example["answer"],      # ground truth
+                "generated_answer": answer,            # model answer
+                "retrieved_docs": [
+                    doc.page_content if hasattr(doc, 'page_content') else str(doc)
+                    for doc in relevant_docs
+                ]
+            }
+            ragas_outputs.append(ragas_result)
+        return ragas_outputs
 
     def evaluate_answers(
         self,
@@ -179,88 +201,82 @@ class Benchmark:
 
         else:
             print("Index not found, generating it...")
-            retrieve = Retriever()
-            docs_processed = retrieve.split_documents(
-                chunk_size,
-                langchain_docs,
-                embedding_model_name,
-            )
             knowledge_index = FAISS.from_documents(
-                docs_processed, embedding_model, distance_strategy=DistanceStrategy.COSINE
+                self.chunks, embedding_model, distance_strategy=DistanceStrategy.COSINE
             )
             knowledge_index.save_local(index_folder_path)
             return knowledge_index
 
-    def evaluate(self):
+    def safe_parse_score(
+        self,
+        x,
+    ):
+        try:
+            match = re.search(r'\d+', str(x))
+            return int(match.group()) if match else None
+        except:
+            return None
+
+    def evaluate(
+        self,
+        eval_dataset,
+        RAW_KNOWLEDGE_BASE,
+    ):
         if not os.path.exists("./output"):
             os.mkdir("./output")
 
-        for chunk_size in [200]:
-            for embeddings in ["thenlper/gte-small"]:
-                for rerank in [True, False]:
-                    evaluator = Evaluate()
-                    eval_dataset = evaluator.generate_evaluation_dataset()
+        reader = Reader()
+        READER_LLM = reader.reader_llm
+        reranker = reader.reranker
+        READER_MODEL_NAME = reader.READER_MODEL_NAME
 
-                    reader = Reader()
-                    READER_LLM = reader.reader_llm
-                    reranker = reader.reranker
-                    READER_MODEL_NAME = reader.READER_MODEL_NAME
+        settings_name = f"chunk:{self.chunk_size}_embeddings:{self.embedder.replace('/', '~')}_rerank:{self.rerank}_reader-model:{READER_MODEL_NAME.replace('/', '~')}"
+        output_file_name = f"./output/rag_{settings_name}.json"
 
-                    settings_name = f"chunk:{chunk_size}_embeddings:{embeddings.replace('/', '~')}_rerank:{rerank}_reader-model:{READER_MODEL_NAME.replace('/', '~')}"
-                    output_file_name = f"./output/rag_{settings_name}.json"
+        print(f"Running evaluation for {settings_name}:")
 
-                    print(f"Running evaluation for {settings_name}:")
+        print("Loading knowledge base embeddings...")
+        knowledge_index = self.load_embeddings(
+            RAW_KNOWLEDGE_BASE,
+            chunk_size=self.chunk_size,
+            embedding_model_name=self.embedder,
+        )
 
-                    print("Loading knowledge base embeddings...")
-                    retriever = Retriever()
-                    RAW_KNOWLEDGE_BASE = retriever.raw_knowledge_base
+        print("Running RAG...")
 
-                    knowledge_index = self.load_embeddings(
-                        RAW_KNOWLEDGE_BASE,
-                        chunk_size=chunk_size,
-                        embedding_model_name=embeddings,
-                    )
+        self.run_rag_tests(
+            eval_dataset=eval_dataset,
+            llm=READER_LLM,
+            knowledge_index=knowledge_index,
+            output_file=output_file_name,
+            reranker=reranker,
+            verbose=False,
+            test_settings=settings_name,
+        )
 
-                    print("Running RAG...")
+        print("Running evaluation...")
+        self.evaluate_answers(
+            output_file_name,
+            self.eval_chat_model,
+            self.evaluator_name,
+            self.evaluation_prompt_template,
+        )
 
-                    self.run_rag_tests(
-                        eval_dataset=eval_dataset,
-                        llm=READER_LLM,
-                        knowledge_index=knowledge_index,
-                        output_file=output_file_name,
-                        reranker=reranker,
-                        verbose=False,
-                        test_settings=settings_name,
-                    )
-
-                    print("Running evaluation...")
-                    self.evaluate_answers(
-                        output_file_name,
-                        self.eval_chat_model,
-                        self.evaluator_name,
-                        self.evaluation_prompt_template,
-                    )
-
-                    gc.collect()
-                    torch.cuda.empty_cache()
+        gc.collect()
+        torch.cuda.empty_cache()
         
-
         outputs = []
         for file in glob.glob("./output/*.json"):
             output = pd.DataFrame(json.load(open(file, "r")))
             output["settings"] = file
             outputs.append(output)
-        result = pd.concat(outputs)
-
-        def safe_parse_score(x):
-            try:
-                # Finds the first digit in the string
-                match = re.search(r'\d+', str(x))
-                return int(match.group()) if match else None
-            except:
-                return None
-
-        result["eval_score_OLLAMA_llama3"] = result["eval_score_OLLAMA_llama3"].apply(safe_parse_score)
-        average_scores = result.groupby("settings")["eval_score_OLLAMA_llama3"].mean()
-        average_scores.sort_values()
-        return average_scores
+        
+        try:
+            result = pd.concat(outputs)
+            result["eval_score_OLLAMA_llama3"] = result["eval_score_OLLAMA_llama3"].apply(self.safe_parse_score)
+            average_scores = result.groupby("settings")["eval_score_OLLAMA_llama3"].mean()
+            average_scores.sort_values()
+            return average_scores
+        except Exception as e:
+            print(f"Error seen as {e}")
+            return
