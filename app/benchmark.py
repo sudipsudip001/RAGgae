@@ -91,12 +91,14 @@ class Benchmark:
         verbose: Optional[bool] = True,
         test_settings: Optional[str] = None,
     ):
+        outputs = []
+        ragas_outputs = []
         try:
-            with open(output_file, 'r') as f:
-                outputs = json.load(f)
+            if output_file:
+                with open(output_file, 'r') as f:
+                    outputs = json.load(f)
         except:
             outputs = []
-            ragas_outputs = []
         
         for example in eval_dataset:
             question = example["question"]
@@ -104,13 +106,14 @@ class Benchmark:
                 continue
 
             reader = Reader()
-
             answer, relevant_docs = reader.answer_with_rag(
                 question, llm, knowledge_index, reranker=reranker
             )
+            gc.collect()
+            torch.cuda.empty_cache()
 
             if verbose:
-                print("=======================================================")
+                print("="*55)
                 print(f"Question: {question}")
                 print(f"Answer: {answer}")
                 print(f'True answer: {example["answer"]}')
@@ -119,15 +122,22 @@ class Benchmark:
                 "true_answer": example["answer"],
                 "source_doc": example["source_doc"],
                 "generated_answer": answer,
-                "retrieved_docs": [doc for doc in relevant_docs],
+                "retrieved_docs": [
+                    {
+                        "page_content": doc.page_content if hasattr(doc, "page_content") else str(doc),
+                        "metadata": doc.metadata if hasattr(doc, "metadata") else {}
+                    }
+                    for doc in relevant_docs
+                ],
             }
             if test_settings:
                 result["test_settings"] = test_settings
             outputs.append(result)
 
             #UNCOMMENT FOR OTHER PURPOSE
-            # with open(output_file, "w") as f:
-            #     json.dump(outputs, f)
+            if output_file:
+                with open(output_file, "w") as f:
+                    json.dump(outputs, f)
 
             # modified for the ragas output purpose
             ragas_result = {
@@ -151,7 +161,14 @@ class Benchmark:
     ) -> None:
         answers = []
         if os.path.isfile(answer_path):
-            answers = json.load(open(answer_path, "r"))
+            try:
+                with open(answer_path, "r") as f:
+                    content = f.read().strip()
+                    if content:
+                        answers = json.loads(content)
+            except json.JSONDecodeError as e:
+                print(f"Warning: Could not parse {answer_path}: {e}")
+                return
 
         for experiment in answers:
             if f"eval_score_{evaluator_name}" in experiment:
@@ -221,19 +238,29 @@ class Benchmark:
         self,
         eval_dataset,
         RAW_KNOWLEDGE_BASE,
+        reader_llm=None,
+        reranker: Optional[Reranker] = None,
+        reader_model_name=None,
     ):
         if not os.path.exists("./output"):
             os.mkdir("./output")
 
-        reader = Reader()
-        READER_LLM = reader.reader_llm
-        reranker = reader.reranker
-        READER_MODEL_NAME = reader.READER_MODEL_NAME
+        if reader_llm is None or reranker is None or reader_model_name is None:
+            reader = Reader()
+            READER_LLM = reader.reader_llm
+            reranker = reader.reranker
+            READER_MODEL_NAME = reader.READER_MODEL_NAME
+        else:
+            READER_LLM = reader_llm
+            reranker = reranker
+            READER_MODEL_NAME = reader_model_name
+            
 
         settings_name = f"chunk:{self.chunk_size}_embeddings:{self.embedder.replace('/', '~')}_rerank:{self.rerank}_reader-model:{READER_MODEL_NAME.replace('/', '~')}"
         output_file_name = f"./output/rag_{settings_name}.json"
 
-        print(f"Running evaluation for {settings_name}:")
+        print(f"RUNNING EVALUATION FOR {settings_name}:")
+        print(f"RUNNING EVALUATION FOR THE FILENAME: {output_file_name}:")
 
         print("Loading knowledge base embeddings...")
         knowledge_index = self.load_embeddings(
@@ -254,13 +281,14 @@ class Benchmark:
             test_settings=settings_name,
         )
 
-        print("Running evaluation...")
+        print("RUNNING EVALUATION...")
         self.evaluate_answers(
             output_file_name,
             self.eval_chat_model,
             self.evaluator_name,
             self.evaluation_prompt_template,
         )
+        print("RUNNING WELL 1...")
 
         gc.collect()
         torch.cuda.empty_cache()
@@ -270,6 +298,7 @@ class Benchmark:
             output = pd.DataFrame(json.load(open(file, "r")))
             output["settings"] = file
             outputs.append(output)
+        print("RUNNING WELL 2...")
         
         try:
             result = pd.concat(outputs)
@@ -277,6 +306,8 @@ class Benchmark:
             average_scores = result.groupby("settings")["eval_score_OLLAMA_llama3"].mean()
             average_scores.sort_values()
             return average_scores
+            print("RUNNING WELL 3...")
         except Exception as e:
             print(f"Error seen as {e}")
+            print("RUNNING WELL 4...")
             return

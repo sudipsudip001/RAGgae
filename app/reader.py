@@ -178,7 +178,7 @@ class Reader:
                     if doc.page_content == res.document:
                         reranked_docs.append(doc)
                         break
-            # relevant_docs = reranked_docs
+            # relevant_docs = reranked_docs # this apparently causes a problem
         else:
             relevant_docs = relevant_docs[:num_docs_final]
         chunks = []

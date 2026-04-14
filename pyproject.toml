@@ -12,6 +12,7 @@ dependencies = [
     "ipywidgets>=8.1.8",
     "langchain>=1.2.13",
     "langchain-community>=0.4.1",
+    "langchain-experimental>=0.4.1",
     "langchain-google-genai>=4.2.1",
     "langchain-groq>=1.1.2",
     "langchain-ollama>=1.0.1",

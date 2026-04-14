@@ -16,80 +16,79 @@ class Evaluate:
         self.N_GENERATIONS = 10
 
         self.QA_generation_prompt = """
-            Your task is to write a factoid question and an answer given a context.
-            Your factoid question should be answerable with a specific, concise piece of factual information from the context.
-            Your factoid question should be formulated in the same style as questions users could ask in a search engine.
-            This means that your factoid question MUST NOT mention something like "according to the passage" or "context".
+        Your task is to write a factoid question and an answer given a context.
+        Your factoid question should be answerable with a specific, concise piece of factual information from the context.
+        Your factoid question should be formulated in the same style as questions users could ask in a search engine.
+        This means that your factoid question MUST NOT mention something like "according to the passage" or "context".
 
-            Provide your answer as follows:
+        Provide your answer as follows:
 
-            Output:::
-            Factoid question: (your factoid question)
-            Answer: (your answer to the factoid question)
+        Output:::
+        Factoid question: (your factoid question)
+        Answer: (your answer to the factoid question)
 
-            Now here is the context.
+        Now here is the context.
 
-            Context: {context}\n
-            Output:::"""
+        Context: {context}\n
+        Output:::"""
 
         self.question_groundedness_critique_prompt = """
-            You will be given a context and a question.
-            Your task is to provide a 'total rating' scoring how well one can answer the given question unambiguously with the given context.
-            Give your answer on a scale of 1 to 5, where 1 means that the question is not answerable at all given the context, and 5 means that the question is clearly and unambiguously answerable with the context.
+        You are evaluating a question-answer dataset.
 
-            Provide your answer as follows:
+        Given the context and question, rate how well the question is grounded in the context.
 
-            Answer:::
-            Evaluation: (your rationale for the rating, as a text)
-            Total rating: (your rating, as a number between 1 and 5)
+        Evaluation criteria:
+        5 = answer clearly supported by context
+        4 = mostly supported
+        3 = partially supported
+        2 = weak support
+        1 = not supported
 
-            You MUST provide values for 'Evaluation:' and 'Total rating:' in your answer.
+        Respond ONLY in this format:
 
-            Now here are the question and context.
+        Evaluation: <short reasoning>
+        Total rating: <1-5>
 
-            Question: {question}\n
-            Context: {context}\n
-            Answer::: """
+        Context:
+        {context}
+
+        Question:
+        {question}
+        """
     
         self.question_relevance_critique_prompt = """
-            You will be given a question.
-            Your task is to provide a 'total rating' representing how useful this question can be to machine learning developers building NLP applications with the Hugging Face ecosystem.
-            Give your answer on a scale of 1 to 5, where 1 means that the question is not useful at all, and 5 means that the question is extremely useful.
+            Evaluate whether the question is relevant to the given document collection.
 
-            Provide your answer as follows:
+            A relevant question:
+            - relates to the information in the document
+            - could be answered using the document
 
-            Answer:::
-            Evaluation: (your rationale for the rating, as a text)
-            Total rating: (your rating, as a number between 1 and 5)
+            5 = highly relevant
+            1 = completely irrelevant
 
-            You MUST provide values for 'Evaluation:' and 'Total rating:' in your answer.
+            Respond ONLY in this format:
 
-            Now here is the question.
+            Evaluation: <short reasoning>
+            Total rating: <1-5>
 
-            Question: {question}\n
-            Answer::: """
+            Question:
+            {question}
+            """
         
         self.question_standalone_critique_prompt = """
-            You will be given a question.
-            Your task is to provide a 'total rating' representing how context-independent this question is.
-            Give your answer on a scale of 1 to 5, where 1 means that the question depends on additional information to be understood, and 5 means that the question makes sense by itself.
-            For instance, if the question refers to a particular setting, like 'in the context' or 'in the document', the rating must be 1.
-            The questions can contain obscure technical nouns or acronyms like Gradio, Hub, Hugging Face or Space and still be a 5: it must simply be clear to an operator with access to documentation what the question is about.
+        Evaluate whether the question is understandable without additional context.
 
-            For instance, "What is the name of the checkpoint from which the ViT model is imported?" should receive a 1, since there is an implicit mention of a context, thus the question is not independent from the context.
+        5 = fully self-contained
+        1 = unclear without context
 
-            Provide your answer as follows:
+        Respond ONLY in this format:
 
-            Answer:::
-            Evaluation: (your rationale for the rating, as a text)
-            Total rating: (your rating, as a number between 1 and 5)
+        Evaluation: <short reasoning>
+        Total rating: <1-5>
 
-            You MUST provide values for 'Evaluation:' and 'Total rating:' in your answer.
-
-            Now here is the question.
-
-            Question: {question}\n
-            Answer::: """
+        Question:
+        {question}
+        """
 
         self.CHUNKS = chunkz
 
@@ -112,8 +111,9 @@ class Evaluate:
         
         response = client_instance.chat.completions.create(
             messages=messages,
+            # model="openai/gpt-oss-120b",
+            model="moonshotai/kimi-k2-instruct-0905",
             # model="llama-3.3-70b-versatile",
-            model="openai/gpt-oss-120b",
             max_tokens=200,
             temperature=0,
             top_p=0.9,
@@ -132,7 +132,7 @@ class Evaluate:
             try:
                 question = output_QA_couple.split("Factoid question: ")[-1].split("Answer: ")[0]
                 answer = output_QA_couple.split("Answer: ")[-1]
-                assert len(answer) < 300, "Answer is too long"
+                assert len(answer) < 500, "Answer is too long"
                 outputs.append(
                     {
                         "context": sampled_context.page_content,
@@ -141,7 +141,8 @@ class Evaluate:
                         "source_doc": sampled_context.metadata["source"],
                     }
                 )
-            except:
+            except Exception as e:
+                print(f"Skipping due to error: {e}")
                 continue
         return outputs
 
@@ -150,6 +151,8 @@ class Evaluate:
     ):
         docs_processed = self.CHUNKS
         outputs = self.generate_qa(docs_processed)
+        # print(f"The outputs from the QnA looks something like this: {outputs}")
+        print("-"*7, "Generating evaluation dataset", "-"*7)
 
         for output in outputs:
             evaluations = {
@@ -168,20 +171,26 @@ class Evaluate:
                     self.question_standalone_critique_prompt.format(question=output["question"]),
                 ),
             }
-            try:
-                for criterion, evaluation in evaluations.items():
-                    score, eval = (
-                        int(evaluation.split("Total rating: ")[-1].strip()),
-                        evaluation.split("Total rating: ")[-2].split("Evaluation: ")[1],
-                    )
-                    output.update(
-                        {
-                            f"{criterion}_score": score,
-                            f"{criterion}_eval": eval,
-                        }
-                    )
-            except Exception as e:
-                continue
+
+            for criterion, evaluation in evaluations.items():
+                try:
+                    score_raw = evaluation.split("Total rating:")[-1].strip()
+                    score = int(score_raw.split()[0].rstrip(".,\n"))
+
+                    eval_text = evaluation.split("Evaluation:")[-1].split("Total rating:")[0].strip()
+
+                    output.update({
+                        f"{criterion}_score": score,
+                        f"{criterion}_eval": eval_text,
+                    })
+                except Exception as e:
+                    print(f"Parse error for [{criterion}]: {e}")
+                    print(f"  Raw response: {evaluation[:150]}")
+                    # Set a default failing score so the row isn't silently dropped
+                    output.update({
+                        f"{criterion}_score": 0,
+                        f"{criterion}_eval": "parse_failed",
+                    })
         
         # final step of producing the result
         generated_questions = pd.DataFrame.from_dict(outputs)
@@ -190,6 +199,13 @@ class Evaluate:
             & (generated_questions["relevance_score"] >= 3)
             & (generated_questions["standalone_score"] >= 3)
         ]
+
+        # Add this before the .loc[] filter
+        print("Score summary:")
+        for _, row in generated_questions.iterrows():
+            print(f"  Q: {row['question'][:60]}")
+            print(f"     groundedness={row.get('groundedness_score')} | relevance={row.get('relevance_score')} | standalone={row.get('standalone_score')}")
+
 
         eval_dataset = datasets.Dataset.from_pandas(
             generated_questions, split="train", preserve_index=False
