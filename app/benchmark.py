@@ -91,26 +91,37 @@ class Benchmark:
         verbose: Optional[bool] = True,
         test_settings: Optional[str] = None,
     ):
+        outputs = []
+        ragas_outputs = []
         try:
-            with open(output_file, 'r') as f:
-                outputs = json.load(f)
+            if output_file:
+                with open(output_file, 'r') as f:
+                    outputs = json.load(f)
         except:
             outputs = []
-            ragas_outputs = []
         
         for example in eval_dataset:
             question = example["question"]
             if question in [output["question"] for output in outputs]:
                 continue
 
-            reader = Reader()
+            gc.collect()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
 
+            reader = Reader()
             answer, relevant_docs = reader.answer_with_rag(
-                question, llm, knowledge_index, reranker=reranker
+                question, llm, knowledge_index,
+                reranker=reranker,
+                num_retrieved_docs=3,
+                num_docs_final=2,
             )
 
+            gc.collect()
+            torch.cuda.empty_cache()
+
             if verbose:
-                print("=======================================================")
+                print("="*55)
                 print(f"Question: {question}")
                 print(f"Answer: {answer}")
                 print(f'True answer: {example["answer"]}')
@@ -119,15 +130,22 @@ class Benchmark:
                 "true_answer": example["answer"],
                 "source_doc": example["source_doc"],
                 "generated_answer": answer,
-                "retrieved_docs": [doc for doc in relevant_docs],
+                "retrieved_docs": [
+                    {
+                        "page_content": doc.page_content if hasattr(doc, "page_content") else str(doc),
+                        "metadata": doc.metadata if hasattr(doc, "metadata") else {}
+                    }
+                    for doc in relevant_docs
+                ],
             }
             if test_settings:
                 result["test_settings"] = test_settings
             outputs.append(result)
 
             #UNCOMMENT FOR OTHER PURPOSE
-            # with open(output_file, "w") as f:
-            #     json.dump(outputs, f)
+            if output_file:
+                with open(output_file, "w") as f:
+                    json.dump(outputs, f)
 
             # modified for the ragas output purpose
             ragas_result = {
@@ -151,7 +169,14 @@ class Benchmark:
     ) -> None:
         answers = []
         if os.path.isfile(answer_path):
-            answers = json.load(open(answer_path, "r"))
+            try:
+                with open(answer_path, "r") as f:
+                    content = f.read().strip()
+                    if content:
+                        answers = json.loads(content)
+            except json.JSONDecodeError as e:
+                print(f"Warning: Could not parse {answer_path}: {e}")
+                return
 
         for experiment in answers:
             if f"eval_score_{evaluator_name}" in experiment:
@@ -181,7 +206,8 @@ class Benchmark:
         embedding_model = HuggingFaceEmbeddings(
             model_name=embedding_model_name,
             multi_process=False,
-            model_kwargs={"device": "cuda"},
+            # model_kwargs={"device": "cuda"},
+            model_kwargs={"device": "cpu"},
             encode_kwargs={
                 "normalize_embeddings": True
             },
@@ -221,29 +247,37 @@ class Benchmark:
         self,
         eval_dataset,
         RAW_KNOWLEDGE_BASE,
+        reader_llm=None,
+        reranker: Optional[Reranker] = None,
+        reader_model_name=None,
     ):
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
         if not os.path.exists("./output"):
             os.mkdir("./output")
 
-        reader = Reader()
-        READER_LLM = reader.reader_llm
-        reranker = reader.reranker
-        READER_MODEL_NAME = reader.READER_MODEL_NAME
+        if reader_llm is None or reranker is None or reader_model_name is None:
+            reader = Reader()
+            READER_LLM = reader.reader_llm
+            reranker = reader.reranker
+            READER_MODEL_NAME = reader.READER_MODEL_NAME
+        else:
+            READER_LLM = reader_llm
+            reranker = reranker
+            READER_MODEL_NAME = reader_model_name
 
         settings_name = f"chunk:{self.chunk_size}_embeddings:{self.embedder.replace('/', '~')}_rerank:{self.rerank}_reader-model:{READER_MODEL_NAME.replace('/', '~')}"
         output_file_name = f"./output/rag_{settings_name}.json"
-
-        print(f"Running evaluation for {settings_name}:")
-
+        print(f"RUNNING EVALUATION FOR {settings_name}:")
+        print(f"RUNNING EVALUATION FOR THE FILENAME: {output_file_name}:")
         print("Loading knowledge base embeddings...")
         knowledge_index = self.load_embeddings(
             RAW_KNOWLEDGE_BASE,
             chunk_size=self.chunk_size,
             embedding_model_name=self.embedder,
         )
-
         print("Running RAG...")
-
         self.run_rag_tests(
             eval_dataset=eval_dataset,
             llm=READER_LLM,
@@ -253,24 +287,20 @@ class Benchmark:
             verbose=False,
             test_settings=settings_name,
         )
-
-        print("Running evaluation...")
+        print("RUNNING EVALUATION...")
         self.evaluate_answers(
             output_file_name,
             self.eval_chat_model,
             self.evaluator_name,
             self.evaluation_prompt_template,
         )
-
         gc.collect()
         torch.cuda.empty_cache()
-        
         outputs = []
         for file in glob.glob("./output/*.json"):
             output = pd.DataFrame(json.load(open(file, "r")))
             output["settings"] = file
             outputs.append(output)
-        
         try:
             result = pd.concat(outputs)
             result["eval_score_OLLAMA_llama3"] = result["eval_score_OLLAMA_llama3"].apply(self.safe_parse_score)

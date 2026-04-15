@@ -97,8 +97,11 @@ class Reader:
         if self._model is None:
             try:
                 self._model = AutoModelForCausalLM.from_pretrained(
-                    self.READER_MODEL_NAME, quantization_config=self.bnb_config
-                )
+                    self.READER_MODEL_NAME,
+                    quantization_config=self.bnb_config,
+                    device_map="auto",
+                    max_memory={0: "8GiB", "cpu": "16GiB"},
+                )   
             except:
                 self._model = AutoModelForCausalLM.from_pretrained(
                     self.READER_MODEL_NAME, quantization_config=self.bnb_config
@@ -175,10 +178,10 @@ class Reader:
             reranked_docs = []
             for res in rerank_results.results[:num_docs_final]:
                 for doc in relevant_docs:
-                    if doc.page_content == res.document:
+                    if doc.page_content == res.document.text:
                         reranked_docs.append(doc)
                         break
-            # relevant_docs = reranked_docs
+            relevant_docs = reranked_docs
         else:
             relevant_docs = relevant_docs[:num_docs_final]
         chunks = []

@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
 
     ingestor = Ingestor(
         ["../docs/crime_act.pdf", "../docs/interim_government_act.pdf", "../docs/labor_act.pdf"],
-        200, 50, "thenlper/gte-small"
+        200, 50, "thenlper/gte-small",
     )
     VECTOR_DB = ingestor.vector_database
     RAW_KNOWLEDGE_BASE = ingestor.raw_knowledge_base
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     )
     print("All models loaded — server ready!")
 
-    yield 
+    yield
 
     print("Shutting down...")
     gc.collect()
@@ -56,11 +56,11 @@ class QuestionRequest(BaseModel):
 
 class AnswerResponse(BaseModel):
     answer: str
-    relevant_docs: str
+    found_in_context: bool
 
 class EvalResponse(BaseModel):
     llm_scores: list
-    ragas_scores: dict
+    ragas_scores: list
 
 #------------------------------------ENDPOINTS------------------------------------------
 
@@ -72,8 +72,8 @@ def health():
 def ask(req: QuestionRequest):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
-
-    answer, relevant_docs = reader.answer_with_rag(
+    
+    result, relevant_docs = reader.answer_with_rag(
         question=req.question,
         llm=reader.reader_llm,
         knowledge_index=VECTOR_DB,
@@ -88,12 +88,17 @@ def ask(req: QuestionRequest):
             torch.cuda.empty_cache()
 
     return AnswerResponse(
-        answer=answer,
-        relevant_docs=str(relevant_docs)[:500]
+        answer=result["answer"],
+        found_in_context=result["found_in_context"]
     )
 
 @app.post("/evaluate", response_model=EvalResponse)
 def evaluate():
+    reader._reader_llm = None
+    reader._model = None
+    gc.collect()
+    torch.cuda.empty_cache()
+
     chunks_data = ingestor.chunker()
     evaluator = Evaluate(chunks_data)
     eval_dataset = evaluator.generate_evaluation_dataset()
@@ -102,6 +107,10 @@ def evaluate():
     scores = benchmarker.evaluate(
         eval_dataset=eval_dataset,
         RAW_KNOWLEDGE_BASE=RAW_KNOWLEDGE_BASE,
+        reader_llm=reader.reader_llm,
+        # reranker=reader.reranker,
+        reranker=None,
+        reader_model_name=reader.READER_MODEL_NAME,
     )
 
     outputs = benchmarker.run_rag_tests(
@@ -113,11 +122,19 @@ def evaluate():
         {
             "question": item["question"],
             "ground_truth": item["true_answer"],
-            "answer": item["generated_answer"],
+            "answer": item["generated_answer"]["answer"] if isinstance(item["generated_answer"], dict) else item["generated_answer"],
             "contexts": item["retrieved_docs"]
         }
         for item in outputs
     ]
-    raga = Ragged(ragas_dataset, "thenlper/gte-small", "mistralai/Mistral-7B-Instruct-v0.3")
-    final_score = raga.score()
-    return EvalResponse(llm_scores=scores, ragas_scores=final_score)
+    if len(ragas_dataset) == 0:
+        print(f"Skipping RAGAS, dataset is empty. Fix QA generation first.")
+    else:
+        gc.collect()
+        torch.cuda.empty_cache()
+        raga = Ragged(ragas_dataset, "thenlper/gte-small")
+        final_score = raga.score()
+        return EvalResponse(
+            llm_scores=scores,
+            ragas_scores=final_score.to_dict(orient="records")
+        )
