@@ -97,7 +97,10 @@ class Reader:
         if self._model is None:
             try:
                 self._model = AutoModelForCausalLM.from_pretrained(
-                    self.READER_MODEL_NAME, quantization_config=self.bnb_config
+                    self.READER_MODEL_NAME,
+                    quantization_config=self.bnb_config,
+                    device_map="auto",
+                    max_memory={0: "8GiB", "cpu": "16GiB"},
                 )
             except:
                 self._model = AutoModelForCausalLM.from_pretrained(

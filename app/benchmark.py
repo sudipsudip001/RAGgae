@@ -105,10 +105,18 @@ class Benchmark:
             if question in [output["question"] for output in outputs]:
                 continue
 
+            gc.collect()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
             reader = Reader()
             answer, relevant_docs = reader.answer_with_rag(
-                question, llm, knowledge_index, reranker=reranker
+                question, llm, knowledge_index,
+                reranker=reranker,
+                num_retrieved_docs=3,
+                num_docs_final=2,
             )
+
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -198,7 +206,8 @@ class Benchmark:
         embedding_model = HuggingFaceEmbeddings(
             model_name=embedding_model_name,
             multi_process=False,
-            model_kwargs={"device": "cuda"},
+            # model_kwargs={"device": "cuda"},
+            model_kwargs={"device": "cpu"},
             encode_kwargs={
                 "normalize_embeddings": True
             },
@@ -242,6 +251,9 @@ class Benchmark:
         reranker: Optional[Reranker] = None,
         reader_model_name=None,
     ):
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
         if not os.path.exists("./output"):
             os.mkdir("./output")
 
@@ -254,23 +266,18 @@ class Benchmark:
             READER_LLM = reader_llm
             reranker = reranker
             READER_MODEL_NAME = reader_model_name
-            
 
         settings_name = f"chunk:{self.chunk_size}_embeddings:{self.embedder.replace('/', '~')}_rerank:{self.rerank}_reader-model:{READER_MODEL_NAME.replace('/', '~')}"
         output_file_name = f"./output/rag_{settings_name}.json"
-
         print(f"RUNNING EVALUATION FOR {settings_name}:")
         print(f"RUNNING EVALUATION FOR THE FILENAME: {output_file_name}:")
-
         print("Loading knowledge base embeddings...")
         knowledge_index = self.load_embeddings(
             RAW_KNOWLEDGE_BASE,
             chunk_size=self.chunk_size,
             embedding_model_name=self.embedder,
         )
-
         print("Running RAG...")
-
         self.run_rag_tests(
             eval_dataset=eval_dataset,
             llm=READER_LLM,
@@ -280,7 +287,6 @@ class Benchmark:
             verbose=False,
             test_settings=settings_name,
         )
-
         print("RUNNING EVALUATION...")
         self.evaluate_answers(
             output_file_name,
@@ -288,26 +294,19 @@ class Benchmark:
             self.evaluator_name,
             self.evaluation_prompt_template,
         )
-        print("RUNNING WELL 1...")
-
         gc.collect()
         torch.cuda.empty_cache()
-        
         outputs = []
         for file in glob.glob("./output/*.json"):
             output = pd.DataFrame(json.load(open(file, "r")))
             output["settings"] = file
             outputs.append(output)
-        print("RUNNING WELL 2...")
-        
         try:
             result = pd.concat(outputs)
             result["eval_score_OLLAMA_llama3"] = result["eval_score_OLLAMA_llama3"].apply(self.safe_parse_score)
             average_scores = result.groupby("settings")["eval_score_OLLAMA_llama3"].mean()
             average_scores.sort_values()
             return average_scores
-            print("RUNNING WELL 3...")
         except Exception as e:
             print(f"Error seen as {e}")
-            print("RUNNING WELL 4...")
             return

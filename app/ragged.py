@@ -19,10 +19,8 @@ class Ragged:
         self,
         dataset: List[Dict],
         embedder: str = "thenlper/gte-small",
-        llm_model: str = "mistralai/Mistral-7B-Instruct-v0.3",
     ) -> None:
         self.EMBEDDING_MODEL_NAME = embedder
-        self.LLM_MODEL_NAME = llm_model
         self._ragas_llm = None
         self._embedder: HuggingFaceEmbeddings | None = None
         # Ensure the dataset has the required columns: question, contexts, answer, ground_truth
@@ -54,18 +52,11 @@ class Ragged:
 
     @property
     def ragas_llm(self):
-        # if self._ragas_llm is None:
-        #     hf_llm = HuggingFaceEndpoint(
-        #         repo_id=self.LLM_MODEL_NAME,
-        #         task="text-generation",
-        #         temperature=0.1,
-        #         max_new_tokens=512,
-        #     )
-        #     self._ragas_llm = LangchainLLMWrapper(hf_llm)
         if self._ragas_llm is None:
             self._ragas_llm = LangchainLLMWrapper(
                 ChatGroq(
-                    model="llama-3.3-70b-versatile",
+                    # model="llama-3.3-70b-versatile",
+                    model="openai/gpt-oss-120b",
                     temperature=0,
                     api_key=os.getenv("GROQ_API_KEY")
                 )

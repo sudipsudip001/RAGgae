@@ -77,7 +77,8 @@ def ask(req: QuestionRequest):
         question=req.question,
         llm=reader.reader_llm,
         knowledge_index=VECTOR_DB,
-        reranker=reader.reranker,
+        # reranker=reader.reranker,
+        reranker=None,
     )
 
     if torch.cuda.is_available():
@@ -94,6 +95,8 @@ def ask(req: QuestionRequest):
 
 @app.post("/evaluate", response_model=EvalResponse)
 def evaluate():
+    reader._reader_llm = None
+    reader._model = None
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -106,7 +109,8 @@ def evaluate():
         eval_dataset=eval_dataset,
         RAW_KNOWLEDGE_BASE=RAW_KNOWLEDGE_BASE,
         reader_llm=reader.reader_llm,
-        reranker=reader.reranker,
+        # reranker=reader.reranker,
+        reranker=None,
         reader_model_name=reader.READER_MODEL_NAME,
     )
 
@@ -127,7 +131,9 @@ def evaluate():
     if len(ragas_dataset) == 0:
         print(f"Skipping RAGAS, dataset is empty. Fix QA generation first.")
     else:
-        raga = Ragged(ragas_dataset, "thenlper/gte-small", "mistralai/Mistral-7B-Instruct-v0.3")
+        gc.collect()
+        torch.cuda.empty_cache()
+        raga = Ragged(ragas_dataset, "thenlper/gte-small")
         final_score = raga.score()
         return EvalResponse(
             llm_scores=scores,
