@@ -77,8 +77,7 @@ def ask(req: QuestionRequest):
         question=req.question,
         llm=reader.reader_llm,
         knowledge_index=VECTOR_DB,
-        # reranker=reader.reranker,
-        reranker=None,
+        reranker=reader.reranker,
     )
 
     if torch.cuda.is_available():
